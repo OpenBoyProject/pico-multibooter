@@ -1,0 +1,12 @@
+[package]
+name = "mb-uploader"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mb-host.workspace = true
+clap = { version = "4.6", features = ["derive"] }
+ctrlc = "3.5"
+
+[dev-dependencies]
+protocol.workspace = true

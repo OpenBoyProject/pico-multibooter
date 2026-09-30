@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  images:
+    name: Pico and GBA images
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: cargo test --locked -p protocol -p firmware --lib
+      - run: cargo clippy --locked -p firmware --target thumbv6m-none-eabi -- --deny=warnings
+      - run: cargo build-firmware --locked --release
+      - name: Build picotool for UF2 conversion
+        run: |
+          git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git "$RUNNER_TEMP/pico-sdk"
+          git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/picotool.git "$RUNNER_TEMP/picotool"
+          cmake -S "$RUNNER_TEMP/picotool" -B "$RUNNER_TEMP/picotool-build" \
+            -DPICO_SDK_PATH="$RUNNER_TEMP/pico-sdk" -DPICOTOOL_NO_LIBUSB=1 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/picotool-build" --parallel 2
+      - name: Convert Pico firmware
+        run: |
+          mkdir -p release-images
+          "$RUNNER_TEMP/picotool-build/picotool" uf2 convert \
+            target/thumbv6m-none-eabi/release/firmware -t elf \
+            release-images/pico-multibooter.uf2 --family rp2040
+      - name: Build and check GBA ROMs
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work devkitpro/devkitarm:20260610 \
+            sh -c 'make -C gba/hello-world all check && make -C gba/rom-dumper all check'
+          cp gba/hello-world/build/hello-world_mb.gba release-images/
+          cp gba/rom-dumper/build/rom-dumper_mb.gba release-images/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-images
+          path: release-images/*
+          if-no-files-found: error
+
+  binaries:
+    name: ${{ matrix.target }}
+    needs: images
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Link the Windows C runtime statically
+        if: runner.os == 'Windows'
+        run: echo 'RUSTFLAGS=-C target-feature=+crt-static' >> "$GITHUB_ENV"
+      - name: Test PC tools
+        run: cargo test --locked -p mb-cable -p mb-uploader -p mb-dumper -p mb-host -p protocol -p xtask
+      - name: Lint PC tools
+        run: cargo clippy --locked -p mb-cable -p mb-uploader -p mb-dumper -p mb-host -p protocol -p xtask --all-targets -- --deny=warnings
+      - name: Build PC tools
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: cargo build --locked --release --target "$BUILD_TARGET" -p mb-cable -p mb-uploader -p mb-dumper
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-images
+          path: release-images
+      - name: Package archive
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          python scripts/package-release.py --tag "$RELEASE_TAG" --commit "$GITHUB_SHA" \
+            --target "$BUILD_TARGET" --binaries "target/$BUILD_TARGET/release" \
+            --images release-images --output dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [images, binaries]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-images
+          path: dist
+      - name: Hash release assets
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip *.uf2 *.gba > SHA256SUMS
+      - name: Publish completed assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # Leave a failed upload as a draft; never replace a published release.
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/is-draft"; then
+            test "$(cat "$RUNNER_TEMP/is-draft")" = true
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --generate-notes \
+              --title "$RELEASE_TAG" --notes-file docs/release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false
+          fi

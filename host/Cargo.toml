@@ -1,0 +1,8 @@
+[package]
+name = "mb-host"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+protocol.workspace = true
+serialport = { version = "4.10", default-features = false }

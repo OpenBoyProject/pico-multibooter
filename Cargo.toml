@@ -1,0 +1,12 @@
+[workspace]
+members = ["firmware", "host", "protocol", "uploader", "dumper", "cable", "xtask"]
+default-members = ["host", "protocol", "uploader", "dumper", "cable"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+protocol = { path = "protocol" }
+mb-host = { path = "host" }

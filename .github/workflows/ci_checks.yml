@@ -1,0 +1,56 @@
+name: CI Checks
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  building:
+    name: Building
+    strategy:
+      matrix:
+        os:
+          # Check compilation works on common OSes
+          # (i.e. no path issues)
+          - ubuntu-latest
+          - macOS-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: thumbv6m-none-eabi
+      - run: cargo build --locked -p mb-host -p mb-cable -p mb-uploader -p mb-dumper -p protocol -p xtask --release
+      - run: cargo test --locked -p mb-host -p mb-cable -p mb-uploader -p mb-dumper -p protocol -p xtask --release
+      - run: cargo test --locked -p firmware --lib --release
+      - run: cargo build-firmware --locked --release
+  linting:
+    name: Linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          target: thumbv6m-none-eabi
+      - run: cargo clippy --locked -p mb-host -p mb-cable -p mb-uploader -p mb-dumper -p protocol -p xtask --all-targets --all-features -- --deny=warnings
+      - run: cargo clippy --locked -p firmware --lib --tests -- --deny=warnings
+      - run: cargo clippy --locked -p firmware --target thumbv6m-none-eabi --all-features -- --deny=warnings
+      - run: make -C gba/rom-dumper check
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+          target: thumbv6m-none-eabi
+      - run: cargo fmt --all -- --check

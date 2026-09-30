@@ -1,0 +1,29 @@
+files: '(\.rs$|(^|/)Cargo\.(toml|lock)$|^\.cargo/config\.toml$|^rust-toolchain(\.toml)?$|^\.pre-commit-config\.yaml$)'
+
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy-host
+        name: cargo clippy (PC crates and build tasks)
+        entry: cargo clippy --locked -p mb-host -p mb-cable -p mb-uploader -p mb-dumper -p protocol -p xtask --all-targets --all-features -- --deny=warnings
+        language: system
+        pass_filenames: false
+
+      - id: cargo-clippy-firmware-tests
+        name: cargo clippy (firmware library and tests)
+        entry: cargo clippy --locked -p firmware --lib --tests -- --deny=warnings
+        language: system
+        pass_filenames: false
+
+      - id: cargo-clippy-firmware
+        name: cargo clippy (firmware)
+        entry: cargo clippy --locked -p firmware --target thumbv6m-none-eabi --all-features -- --deny=warnings
+        language: system
+        pass_filenames: false

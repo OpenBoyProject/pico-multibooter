@@ -1,0 +1,10 @@
+[package]
+name = "mb-dumper"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mb-host.workspace = true
+protocol.workspace = true
+clap = { version = "4.6", features = ["derive"] }
+ctrlc = "3.5"

@@ -15,4 +15,9 @@ Save dumping detects standard SRAM/FRAM and Flash signatures; EEPROM needs
 `--save-type eeprom512` or `--save-type eeprom8k`. Upload the included v3
 `rom-dumper_mb.gba` before using it. Save output is a raw `.sav` file.
 
+**Patched cartridges:** Automatic save detection can misidentify SRAM-patched
+cartridges as Flash and overwrite SRAM bytes with bank-switch commands. Do not
+use it on cartridges with an unknown save implementation. Read the archive's
+patched-cartridge warning before dumping saves.
+
 See the archive's README for upload, ROM dumping, and save dumping examples.

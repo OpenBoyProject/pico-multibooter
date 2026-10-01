@@ -62,6 +62,13 @@ Reopen and begin a fresh dump to reset application state.
 
 ## Save memory
 
+> **Patched cartridges:** A ROM signature does not prove the save hardware type.
+> On SRAM-patched cartridges, a leftover Flash signature can cause bank-switch
+> writes to overwrite save bytes. Do not use automatic detection on these or
+> other unknown patched save implementations. See the
+> [patched-cartridge notes](../../dumper/README.md#patched-cartridges), including
+> the limits of the 32 KiB `sram` override.
+
 After uploading this v3 image, run:
 
 ```sh
@@ -100,8 +107,9 @@ SRAM and Flash are read with byte accesses. Flash128 selects each 64 KiB bank
 and restores bank 0. EEPROM uses DMA3 with 6- or 14-bit read addresses,
 8/8 waitstates, and 68-bit responses. DMA is used only to read EEPROM into the
 snapshot; SPI streaming still uses the CPU. The raw save bytes exclude RTC
-registers and emulator metadata. No save programming, erase, or flashcart ROM
-bank switching is implemented.
+registers and emulator metadata. No Flash programming, erase, or flashcart ROM
+bank switching is implemented. Flash save-bank selection still writes to the
+cartridge bus and can change SRAM contents when the type is misidentified.
 
 The GBA screen shows preparation and save progress, then confirms completion
 only after the PC checks the CRCs, synchronizes its file, and sends DONE.
@@ -161,8 +169,9 @@ values equal to status/magic words. Interpret replies by position.
 
 These are numeric u32 application words. SPI sends them MSB-first; PMB3 encodes
 them as little-endian u32s in its USB payload. Identity is `0x52444D03`, ACK is
-`0x4F4B0003`. Save reads use bank-selection and EEPROM read-address commands,
-but never program or erase save data.
+`0x4F4B0003`. Save reads use bank-selection and EEPROM read-address commands.
+They do not send Flash program/erase commands, but selecting the wrong save
+type can still modify SRAM as described above.
 
 | Command | Parameters | Reply on subsequent clock(s) |
 | --- | --- | --- |

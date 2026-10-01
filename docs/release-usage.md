@@ -54,6 +54,14 @@ CRC-checked before writing. A failed dump can leave a partial output file.
 To dump only the save with the same GBA program, run this as a separate command.
 You do not need to dump the ROM first:
 
+> **Patched cartridges:** Do not use automatic save detection on SRAM-patched
+> cartridges or other cartridges with an unknown save implementation. ROM
+> signatures can describe the original hardware instead of the installed chip.
+> A false Flash128 detection sends bank-switch writes that overwrite SRAM save
+> bytes. Use a dumper that supports the cartridge's actual hardware and patch.
+> The `sram` override reads only 32 KiB and does not handle arbitrary patched
+> 64 KiB saves or custom layouts. A successful transfer CRC does not catch this.
+
 ```sh
 ./mb-dumper --save cartridge.sav
 ```
@@ -79,6 +87,8 @@ For emulator testing, keep the original dump, import a copy as cartridge save
 memory, and use the ROM dumped from the same cartridge. CRC checks confirm
 transfer integrity, not the validity of the game's saved data. If the game
 rejects a save, also check its type, file size, and emulator import setup.
+Patched ROMs may depend on custom hardware or store saves in a different layout;
+they can require a compatible unmodified ROM and a converted save for emulation.
 
 The tools auto-select a single cable. Use `--port COM3` on Windows or
 `--port /dev/ttyACM0` on Linux if needed; `mb-cable list` shows available cables.

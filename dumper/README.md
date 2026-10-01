@@ -11,6 +11,10 @@ START+SELECT during the GBA boot logo before uploading.
 
 See [environment setup](../README.md#environment-setup) for prerequisites.
 
+> **Before using `--save` on a patched cartridge:** Read the
+> [patched-cartridge notes](#patched-cartridges). Incorrect automatic detection
+> can modify SRAM save data, even though the requested operation is a dump.
+
 ```sh
 cargo build-gba rom-dumper
 cargo upload --release -- gba/rom-dumper/build/rom-dumper_mb.gba
@@ -86,7 +90,8 @@ different dumper. An unrecognized signature returns an error.
 
 The GBA snapshots the save into RAM before streaming it with the same block
 CRC checks as ROM data. Flash128 reads both 64 KiB banks and returns to bank 0.
-EEPROM reads use GBA DMA3. No save programming or erase commands are sent.
+EEPROM reads use GBA DMA3. No Flash programming or erase commands are sent,
+but bank-selection writes can overwrite SRAM if the save type is wrong.
 RTC registers and emulator-specific metadata are not included.
 
 During detection and snapshotting, the terminal shows
@@ -95,12 +100,38 @@ verified bytes, percentage, and KiB/s. The GBA shows bytes sent and confirms
 `Save verified and saved on PC` after the PC finishes. Small saves may finish
 before an intermediate progress update is visible.
 
+### Patched cartridges
+
+Automatic detection trusts a ROM library signature; it does not identify the
+physical save chip. SRAM patches can leave `FLASH1M_V...` in the ROM even when
+Flash has been replaced by SRAM. Other patches, reproduction cartridges, and
+flashcarts can also change how and where saves are stored.
+
+Selecting `flash128` on SRAM sends bank-selection writes to `0x0E005555`,
+`0x0E002AAA`, and `0x0E000000`. SRAM stores those bytes as save data instead of
+interpreting them as commands. This was observed with an SRAM-patched LeafGreen
+cartridge: the dump contained duplicated 64 KiB halves and damaged game
+checksums. The transfer CRC still passed because it covered the bytes after
+they had been changed.
+
+Do not use automatic save detection, or guess a Flash override, on these
+cartridges. Determine their save hardware and patch first, and use a dumper
+that supports that implementation. The current `sram` option reads only
+32 KiB; it is not a general solution for patched 64 KiB saves or custom bank
+layouts. Some patches keep a save backup inside the ROM, which may permit
+recovery from a full ROM dump, but that is cartridge-specific.
+
 ## Checking a save in an emulator
 
 Keep the original `.sav` dump and test with a copy. Use the ROM dumped from
 the same cartridge to remove game version and region differences as a variable,
 then import the raw save using the emulator's save-memory import or file setup.
 This is cartridge save memory, not an emulator save state.
+
+For patched cartridges, the dumped ROM may rely on custom hardware and the
+save may use a nonstandard layout. Emulator testing can require a compatible
+unmodified ROM and save conversion; matching the dumped ROM alone is not
+enough. See [Patched cartridges](#patched-cartridges).
 
 The dumper reads all save bytes, including unused space and redundant slots.
 It does not check whether the cartridge contains a valid saved game or verify

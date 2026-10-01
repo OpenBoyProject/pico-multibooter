@@ -208,6 +208,11 @@ and the GBA shows `PC verified and saved ROM` when the dump finishes.
 
 To dump only save memory with the same GBA program:
 
+> **Patched cartridges:** Do not use automatic save detection on SRAM-patched
+> or other cartridges with an unknown save implementation. A leftover Flash
+> signature can select bank-switch commands that overwrite SRAM save bytes.
+> Read the [patched-cartridge notes](dumper/README.md#patched-cartridges) first.
+
 ```sh
 # Release archive:
 ./mb-dumper --save cartridge.sav

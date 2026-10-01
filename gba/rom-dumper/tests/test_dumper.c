@@ -47,8 +47,63 @@ static void check_crc_bytes(void) {
     }
 }
 
+static uint32_t read_save(uint32_t address) {
+    assert(address >= SAVE_START && address < SAVE_START + SAVE_MAX_SIZE);
+    return address ^ UINT32_C(0x87654321);
+}
+
+static void check_save(void) {
+    Dumper dumper;
+    dumper_init(&dumper);
+    /* Save ranges are inaccessible until a snapshot completes. */
+    dumper_handle(&dumper, DUMPER_BEGIN, read_save);
+    assert(dumper_handle(&dumper, SAVE_START, read_save) == DUMPER_BAD_ADDRESS);
+    assert(dumper_handle(&dumper, DUMPER_SAVE | SAVE_FLASH128, read_save) == DUMPER_ACK);
+    assert(dumper.phase == PREPARING && dumper.save_request == SAVE_FLASH128 + 1);
+    assert(dumper_handle(&dumper, DUMPER_SAVE_STATUS, read_save) == 0);
+    dumper_save_complete(&dumper, dumper.generation, SAVE_MAX_SIZE);
+    assert(dumper_handle(&dumper, DUMPER_SAVE_STATUS, read_save) == SAVE_MAX_SIZE);
+    assert(dumper.phase == READY);
+    dumper_handle(&dumper, DUMPER_BEGIN, read_save);
+    uint32_t start = SAVE_START + 65532;
+    assert(dumper_handle(&dumper, start, read_save) == start);
+    assert(dumper_handle(&dumper, 8, read_save) == 8);
+    assert(dumper_handle(&dumper, DUMPER_READ | 2, read_save) == (DUMPER_READ | 2));
+    uint32_t crc = UINT32_MAX;
+    for (unsigned i = 0; i < 2; ++i) {
+        uint32_t address = start + i * 4;
+        uint32_t value = read_save(address);
+        assert(dumper_handle(&dumper, 0, read_save) == value);
+        crc = reference_crc_word(reference_crc_word(crc, address), value);
+    }
+    assert(dumper_handle(&dumper, 0, read_save) == ~crc);
+    assert(dumper_handle(&dumper, DUMPER_DONE, read_save) == DUMPER_ACK);
+
+    dumper_handle(&dumper, DUMPER_BEGIN, read_save);
+    assert(dumper_handle(&dumper, SAVE_START + SAVE_MAX_SIZE - 4, read_save) == SAVE_START + SAVE_MAX_SIZE - 4);
+    assert(dumper_handle(&dumper, 8, read_save) == DUMPER_BAD_ADDRESS);
+
+    /* A cancelled or replaced snapshot must not become available later. */
+    const uint32_t recovery[] = {DUMPER_HELLO, DUMPER_CANCEL, DUMPER_SAVE | SAVE_SRAM};
+    for (unsigned i = 0; i < 3; ++i) {
+        dumper_handle(&dumper, DUMPER_SAVE, read_save);
+        uint32_t generation = dumper.generation;
+        dumper_handle(&dumper, recovery[i], read_save);
+        dumper_save_complete(&dumper, generation, SAVE_MAX_SIZE);
+        assert(dumper_handle(&dumper, DUMPER_SAVE_STATUS, read_save) == 0);
+    }
+    dumper_handle(&dumper, DUMPER_SAVE, read_save);
+    dumper_save_complete(&dumper, dumper.generation, DUMPER_SAVE_EEPROM_SIZE);
+    assert(dumper.phase == FAILED);
+    assert(dumper_handle(&dumper, DUMPER_SAVE_STATUS, read_save) == DUMPER_SAVE_EEPROM_SIZE);
+    dumper_handle(&dumper, DUMPER_BEGIN, read_save);
+    assert(dumper_handle(&dumper, SAVE_START, read_save) == DUMPER_BAD_ADDRESS);
+    assert(dumper_handle(&dumper, DUMPER_SAVE | 6, read_save) == DUMPER_BAD_COMMAND);
+}
+
 int main(void) {
     check_crc_bytes();
+    check_save();
     Dumper dumper;
     dumper_init(&dumper);
     assert(dumper_handle(&dumper, DUMPER_CHECKSUM, read_word) == 0);

@@ -1,8 +1,9 @@
-# GBA cartridge ROM dumper
+# GBA cartridge ROM and save dumper
 
 A devkitPro/libgba multiboot program that runs from GBA RAM and reads the
-inserted cartridge. Its version 2 protocol supports a declared dump range,
-sequential bulk reads, and a status screen. The Pico forwards words between
+inserted cartridge's ROM or save memory. Its version 3 protocol supports save
+detection, a declared dump range, sequential bulk reads, and a status screen.
+The Pico forwards words between
 the PC and GBA; this program handles the cartridge commands.
 
 ## Build and upload
@@ -14,13 +15,18 @@ cargo build-gba rom-dumper
 cargo upload --release -- gba/rom-dumper/build/rom-dumper_mb.gba
 ```
 
+With a release archive, use `./mb-uploader rom-dumper_mb.gba` instead. Both
+ROM and save dumps use this same GBA image; no second upload is needed between
+dumps. Use the v3 image with the matching PC tool.
+
 Insert the cartridge before powering on the GBA. Hold START+SELECT during the
 boot logo to enter multiboot reception. After upload, wait for **GBA ROM Dumper
 ready...** on screen. This means the program is running, not that the cartridge
 has been detected. It then displays the requested byte count, address, sent
 bytes, percentage, and transfer status. It shows **PC verified and saved ROM**
-only after the host has verified every block, synchronized the output file,
-and sent DONE. Sent bytes alone do not imply a verified file.
+or **Save verified and saved on PC** only after the host has verified every
+block, synchronized the output file, and sent DONE. Sent bytes alone do not
+imply a verified file.
 
 The build needs devkitARM, libgba, `gbafix`, Make, and Python 3. Other
 installations can set `DEVKITPRO` and `DEVKITARM`. `gba_mb.specs` supplies the RAM
@@ -30,12 +36,14 @@ ELF and map files accompany the `.gba`. `cargo build-gba` invokes the Makefile;
 it does not upload the ROM. Use `--port` with `cargo upload` if more than one
 cable is connected. Finish an active dump before uploading or flashing.
 
-## Save a dump
+## Dump ROM
 
 ```sh
 # Example for a known 8 MiB cartridge. --size is the exact byte count.
-cargo run --release -p mb-dumper -- \
+cargo dump --release -- \
     --port /dev/ttyACM0 --size 0x800000 cartridge.gba
+# Equivalent release binary:
+./mb-dumper --port /dev/ttyACM0 --size 0x800000 cartridge.gba
 ```
 
 Choose your cartridge's actual size: `0x400000` = 4 MiB, `0x800000` = 8 MiB,
@@ -46,11 +54,57 @@ data. A matching CRC verifies transmission, not cartridge presence or size.
 
 `mb-dumper` keeps one PC connection open, declares the whole range, then
 reads up to 253 words per batch. It verifies each block before writing its
-little-endian ROM bytes. It refuses to overwrite files and never retries an
+little-endian data bytes. It refuses to overwrite files and never retries an
 uncertain exchange. Errors/Ctrl+C can leave an incomplete file. Application
 errors send CANCEL if the connection is still usable. A dropped connection
 cannot notify the GBA; its screen may remain at the last sent byte count.
 Reopen and begin a fresh dump to reset application state.
+
+## Save memory
+
+After uploading this v3 image, run:
+
+```sh
+cargo dump --release -- --save cartridge.sav
+# Equivalent release binary:
+./mb-dumper --save cartridge.sav
+# For a cartridge known to use 8 KiB EEPROM:
+cargo dump --release -- --save --save-type eeprom8k cartridge.sav
+# Equivalent release binary:
+./mb-dumper --save --save-type eeprom8k cartridge.sav
+```
+
+`--save` dumps only save memory and cannot be combined with `--size`.
+The PC initially shows `Reading cartridge save memory...` without a percentage.
+After preparation, it reports verified bytes, percentage, and transfer speed.
+See the [PC guide](../../dumper/README.md#save-memory) for all CLI types and
+[emulator testing](../../dumper/README.md#checking-a-save-in-an-emulator).
+
+The SAVE types are 0 = auto, 1 = SRAM/FRAM (32 KiB), 2 = Flash64 (64 KiB),
+3 = Flash128 (128 KiB), 4 = EEPROM512 (512 bytes), and 5 = EEPROM8k (8 KiB).
+Auto scans the ROM for the first standard save-library signature. It does not
+infer EEPROM capacity: choose its type explicitly. Unknown signatures return
+`0xBAD00004`; ambiguous EEPROM capacity returns `0xBAD00005`. Overrides must
+match the physical cartridge. Modified ROMs and flashcarts may use different
+save hardware from the ROM signature.
+
+SAVE schedules foreground work while the serial IRQ remains available.
+The host polls SAVE_STATUS using individual words spaced 20 ms apart so GBA
+DMA can delay an IRQ without losing the following exchange. After a nonzero
+size arrives, the host sends `[0, BEGIN, 0x0E000000, size, 0]`, then uses the
+usual READ/CRC/DONE sequence. Do not send HELLO between SAVE and BEGIN.
+There is a 60-second preparation timeout on the PC.
+
+The snapshot occupies 128 KiB of EWRAM, outside the serial handler's IWRAM.
+SRAM and Flash are read with byte accesses. Flash128 selects each 64 KiB bank
+and restores bank 0. EEPROM uses DMA3 with 6- or 14-bit read addresses,
+8/8 waitstates, and 68-bit responses. DMA is used only to read EEPROM into the
+snapshot; SPI streaming still uses the CPU. The raw save bytes exclude RTC
+registers and emulator metadata. No save programming, erase, or flashcart ROM
+bank switching is implemented.
+
+The GBA screen shows preparation and save progress, then confirms completion
+only after the PC checks the CRCs, synchronizes its file, and sends DONE.
 
 ## Transfer speed
 
@@ -59,7 +113,7 @@ after each word. Use release builds for both the Pico firmware and PC dumper.
 
 `mb-dumper` reads the bulk capacity from INFO without clocking the GBA. Each
 block uses one BULK_EXCHANGE containing READ and all its zero clocks. The reply
-contains a stale word, the echoed command, ROM words, and CRC. The complete
+contains a stale word, the echoed command, data words, and CRC. The complete
 block takes one USB request and reply. No uncertain transfer is replayed.
 Terminal progress updates are limited to five per second.
 
@@ -68,11 +122,11 @@ Ignoring USB, scheduler, and block overhead, each 32-bit transfer needs about
 24 KiB/s and an 8 MiB wire-time floor of 5.6 minutes. Actual times will be
 longer; mb-dumper reports measured KiB/s. Bulk commands provide range validation
 and progress without repeating addresses, but still need one SPI word per four
-ROM bytes. They do not eliminate that wire limit.
+ROM or save bytes. They do not eliminate that wire limit.
 
 The serial interrupt, command handler, and cartridge read routine run from
 IWRAM, together with a 1 KiB CRC lookup table. The byte-table CRC uses four
-lookups per 32-bit word, applied to both the address and ROM value. The main
+lookups per 32-bit word, applied to both the address and data value. The main
 loop renders text about five times a second with serial interrupts enabled; it briefly
 masks interrupts only to snapshot four status fields. No rendering, allocation,
 or BIOS calls happen in the serial handler. Native tests do not measure
@@ -84,7 +138,7 @@ Each reply arrives in the **next** transfer. Discard the first returned word.
 A command may be split across USB exchanges; the GBA retains its parser state.
 
 ```sh
-# Identify/reset: second RX must be 0x52444d02.
+# Identify/reset: second RX must be 0x52444d03.
 cargo cable -- --port /dev/ttyACM0 bulk-exchange 0x52444d50 0
 
 # Individual reads still work: RX = stale, ID, ROM[0], ROM[4], CRC.
@@ -103,17 +157,20 @@ these clock data and then its CRC; when idle, they return the identity. Convert 
 little-endian bytes when saving; all u32 values are legal ROM data, including
 values equal to status/magic words. Interpret replies by position.
 
-## Application protocol v2
+## Application protocol v3
 
 These are numeric u32 application words. SPI sends them MSB-first; PMB3 encodes
-them as little-endian u32s in its USB payload. Identity is `0x52444D02`, ACK is
-`0x4F4B0002`. There are no cartridge writes.
+them as little-endian u32s in its USB payload. Identity is `0x52444D03`, ACK is
+`0x4F4B0003`. Save reads use bank-selection and EEPROM read-address commands,
+but never program or erase save data.
 
 | Command | Parameters | Reply on subsequent clock(s) |
 | --- | --- | --- |
-| `0x52444D50` HELLO | None | ID; resets parser, range, progress, and CRC |
-| `0x4245474E` BEGIN | Absolute ROM address, byte count | ACK, echoed address, echoed byte count |
-| `0x52420000 + count` READ | Then `count + 2` zero clocks | Echoed READ/count, `count` ROM words, CRC |
+| `0x52444D50` HELLO | None | ID; resets parser, range, progress, CRC, and save snapshot |
+| `0x4245474E` BEGIN | ROM or save snapshot address, byte count | ACK, echoed address, echoed byte count |
+| `0x52420000 + count` READ | Then `count + 2` zero clocks | Echoed READ/count, `count` data words, CRC |
+| `0x53410000 + type` SAVE | Type 0..5 (see Save memory) | ACK; schedules a save snapshot |
+| `0x53544154` SAVE_STATUS | None | 0 while preparing, size when ready, or error |
 | `0x444F4E45` DONE | None | ACK only if the declared range was sent; marks complete |
 | `0x43414E43` CANCEL | None | ACK; aborts parser/stream and marks cancelled |
 | Zero (idle) | None | ID; CRC unchanged |
@@ -121,7 +178,9 @@ them as little-endian u32s in its USB payload. Identity is `0x52444D02`, ACK is
 | `0x43524300` CHECKSUM (idle) | None | Current CRC; CRC unchanged |
 
 BEGIN validates a nonempty, word-aligned range inside the first 32 MiB ROM
-window. READ requires 1..253 words that fit inside the declared remaining range.
+window or the prepared save snapshot at `0x0E000000`. Save ranges must fit the
+reported snapshot size. BEGIN preserves that snapshot; HELLO and CANCEL clear
+it. READ requires 1..253 words that fit inside the declared remaining range.
 READ resets the block CRC, then each zero queues one word and increments the
 address. The next zero queues the CRC and commits the block's sent count; one
 last zero receives that CRC. Thus a batch has `count + 3` outgoing words and
@@ -141,9 +200,6 @@ wrong address as well as corrupt data. A bulk READ starts a new CRC; individual
 reads accumulate since HELLO. The pairs `(0x08000000, 0x12345678)`,
 `(0x08000004, 0x89ABCDEF)`, `(0x09FFFFFC, 0xFFFFFFFF)` yield `0xE4412F24`.
 
-This program reads cartridge ROM only. It does not access save memory, write
-cartridges, or switch flashcart banks.
-
 ## Checks
 
 ```sh
@@ -155,10 +211,13 @@ python3 gba/rom-dumper/tools/check_rom.py gba/rom-dumper/build/rom-dumper_mb.gba
 ```
 
 Tests cover individual and sequential reads, CRCs, range/count checks, session
-recovery, completion, host byte order, and corrupted responses. Layout checks
+recovery, save snapshot cancellation, save signatures, Flash bank restoration,
+EEPROM bit ordering, completion, host byte order, and corrupted responses. Layout checks
 verify the built multiboot image. Use a hardware dump to check timing and
 cartridge data after changing the transfer path.
 
 References: [devkitPro GBA examples](https://github.com/devkitPro/gba-examples),
 [libgba SIO definitions](https://github.com/devkitPro/libgba/blob/master/include/gba_sio.h),
-and [GBATEK serial documentation](https://mgba-emu.github.io/gbatek/#sio-normal-mode).
+[GBATEK serial documentation](https://mgba-emu.github.io/gbatek/#sio-normal-mode),
+[EEPROM](https://problemkaputt.de/gbatek-gba-cart-backup-eeprom.htm), and
+[Flash](https://problemkaputt.de/gbatek-gba-cart-backup-flash-rom.htm).

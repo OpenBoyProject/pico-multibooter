@@ -31,7 +31,7 @@ it is waiting at the boot screen:
 
 The GBA should display `Hello world!`.
 
-## Dump a cartridge
+## Dump a cartridge ROM or save
 
 Switch the GBA off, insert the cartridge, and turn it on holding START+SELECT
 through the boot logo. Keep the cartridge inserted and upload:
@@ -50,6 +50,35 @@ Use the cartridge's actual size: `0x400000` for 4 MiB, `0x800000` for 8 MiB,
 `0x1000000` for 16 MiB, or `0x2000000` for 32 MiB. Size is not auto-detected.
 Choose a new filename; existing files are never overwritten. Each block is
 CRC-checked before writing. A failed dump can leave a partial output file.
+
+To dump only the save with the same GBA program, run this as a separate command.
+You do not need to dump the ROM first:
+
+```sh
+./mb-dumper --save cartridge.sav
+```
+
+Standard SRAM/FRAM and 64/128 KiB Flash saves are detected from ROM signatures.
+For EEPROM, choose the cartridge's known capacity:
+
+```sh
+# 512-byte EEPROM:
+./mb-dumper --save --save-type eeprom512 cartridge.sav
+# Or 8 KiB EEPROM:
+./mb-dumper --save --save-type eeprom8k cartridge.sav
+```
+
+Other overrides are `sram` (32 KiB), `flash64` (64 KiB), and `flash128`
+(128 KiB); use these only when the hardware type is known. Save dumps do not
+use `--size`. Detection and snapshotting show a preparation message, followed
+by percentage progress during transfer. Use the included v3 GBA dumper image
+with this PC tool.
+
+The output is raw save memory, without RTC data or emulator save-state data.
+For emulator testing, keep the original dump, import a copy as cartridge save
+memory, and use the ROM dumped from the same cartridge. CRC checks confirm
+transfer integrity, not the validity of the game's saved data. If the game
+rejects a save, also check its type, file size, and emulator import setup.
 
 The tools auto-select a single cable. Use `--port COM3` on Windows or
 `--port /dev/ttyACM0` on Linux if needed; `mb-cable list` shows available cables.

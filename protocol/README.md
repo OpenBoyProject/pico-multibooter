@@ -93,5 +93,5 @@ different frame magic and cannot communicate with PMB3. Earlier development
 builds also used PMB3 with different command numbers and payloads, so the INFO
 identity alone cannot distinguish every incompatible revision.
 
-The GBA dumper's application protocol is separate, currently version 2.
+The GBA dumper's application protocol is separate, currently version 3.
 `mb-uploader` performs BIOS multiboot on the PC using raw BulkExchange calls.

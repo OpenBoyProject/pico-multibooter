@@ -18,6 +18,10 @@ file before connecting and pads its end to 16 bytes. It does not convert normal
 cartridge images. Boot the GBA without a cartridge or hold START+SELECT during
 the logo. Success is reported only after the BIOS returns the expected checksum.
 
+To read a cartridge's ROM or save memory, upload the included
+[`gba/rom-dumper`](../gba/rom-dumper/README.md) image, then run
+[`mb-dumper`](../dumper/README.md) with `--size` or `--save`.
+
 Matching PMB3 firmware is required. The uploader reads the capacity from INFO
 and sends raw BulkExchange requests at 256 kHz with a minimum 36 us word gap.
 All BIOS processing is done on the PC. The Pico has no upload commands or

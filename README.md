@@ -2,7 +2,7 @@
 
 A Raspberry Pi Pico cable that connects a PC over USB to the Game Boy Advance
 link port. It can upload multiboot ROMs into GBA RAM and exchange data with
-running programs, including the cartridge ROM dumper included here.
+running programs, including the cartridge ROM and save dumper included here.
 
 Instructions for building the cable and the accompanying blog post can be found
 at [meirl.dev/blog/multiboot-cable](https://meirl.dev/blog/multiboot-cable).
@@ -18,7 +18,7 @@ and GBA programs.
 | `cable/` | `mb-cable` | CLI: cable inspection and raw transfers |
 | `xtask/` | `xtask` | Build tasks for devkitPro GBA ROMs |
 | `uploader/` | `mb-uploader` | Multiboot CLI and library: ROM loading, BIOS handshake, encryption, checksum |
-| `dumper/` | `mb-dumper` | CLI: cartridge protocol, block verification, and file output |
+| `dumper/` | `mb-dumper` | CLI: cartridge ROM/save dumping, block verification, and file output |
 
 All three PC applications use `mb-host`. The USB library has no ROM loading or
 multiboot algorithm. The PC applications share `protocol` with the firmware.
@@ -26,7 +26,7 @@ The uploader batches encrypted words through raw `BulkExchange` and validates
 BIOS replies on the PC. The dumper uses raw bulk transfers with the running GBA
 application. The Pico has no multiboot state or algorithm; it forwards the
 host's words unchanged. Use matching PMB3 firmware and PC binaries. The GBA
-dumper has its own application protocol, currently version 2.
+dumper has its own application protocol, currently version 3.
 
 ## Environment setup
 
@@ -169,7 +169,7 @@ cargo upload --release -- gba/hello-world/build/hello-world_mb.gba
 The uploader reports a verified checksum, and the GBA displays `Hello world!`.
 The program runs from RAM until the GBA is switched off or restarted.
 
-### 3. Dump a cartridge ROM
+### 3. Dump a cartridge ROM or save
 
 The release archive includes `rom-dumper_mb.gba`. To build it from source:
 
@@ -205,6 +205,35 @@ Set `--size` to the cartridge's actual ROM size: `0x400000` for 4 MiB,
 The size is not detected automatically. Choose a new output filename; existing
 files are never overwritten. The PC verifies each block before writing it,
 and the GBA shows `PC verified and saved ROM` when the dump finishes.
+
+To dump only save memory with the same GBA program:
+
+```sh
+# Release archive:
+./mb-dumper --save cartridge.sav
+
+# From source:
+cargo dump --release -- --save cartridge.sav
+```
+
+ROM and save dumps are separate commands; either can run first after uploading
+the GBA dumper. `--save` detects standard SRAM/FRAM and Flash saves from ROM
+signatures. EEPROM requires a known size, for example:
+
+```sh
+# Release archive, for a cartridge with 8 KiB EEPROM:
+./mb-dumper --save --save-type eeprom8k cartridge.sav
+
+# From source, for the same type:
+cargo dump --release -- --save --save-type eeprom8k cartridge.sav
+```
+
+Use `eeprom512` for 512-byte EEPROM. Do not pass the ROM's `--size` when
+dumping saves. Detection and the RAM snapshot happen before percentage progress
+starts. The resulting `.sav` contains raw save memory; the transfer CRC does
+not validate the game's save format. See the
+[dumper guide](dumper/README.md#save-memory) for supported types and emulator
+testing. Save dumping requires the v3 GBA dumper image and matching PC tool.
 
 Upload and dump commands auto-select a single cable. To choose a port:
 

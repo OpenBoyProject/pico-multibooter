@@ -24,6 +24,9 @@ Outputs:
 - `gba/hello-world/build/hello-world_mb.gba`
 - `gba/rom-dumper/build/rom-dumper_mb.gba`
 
+The `rom-dumper` image supports both cartridge ROM and save-memory dumps with
+[`mb-dumper`](../dumper/README.md). There is no separate save-dumper build target.
+
 Each build fixes and validates the multiboot header and pads to 16 bytes.
 The command builds files only. To upload one, put the GBA into multiboot mode:
 

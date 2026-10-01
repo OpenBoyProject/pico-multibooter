@@ -40,6 +40,10 @@ BulkWrite sends words and discards replies. BulkRead repeatedly sends a fill
 word and returns incoming words. BulkExchange sends and receives word arrays.
 There are at most 256 words per bulk command, using fixed buffers and no heap.
 
+The onboard LED is off while idle and on while handling a command and sending
+its reply. It turns off on completion, error, or disconnect. Repeated commands
+can make it flicker; there is no idle heartbeat.
+
 Each SPI word finishes synchronously, then waits at least 36 us asynchronously.
 Single and bulk exchanges use the same pacing. The GBA must prepare and rearm
 its serial interface; a computed reply arrives on a later transfer.
@@ -61,7 +65,7 @@ Closing the cable does not reset the GBA or undo an application operation.
 
 ## Code and tests
 
-- `main.rs`: USB descriptors, SPI setup, and concurrent USB/heartbeat tasks.
+- `main.rs`: USB descriptors, SPI and LED setup, and concurrent USB tasks.
 - `usb.rs`: USB packet I/O, connection monitoring, and the SPI adapter.
 - `server.rs`: stateless command dispatch and replies.
 - `link.rs`: raw exchange interface and minimum word gap.

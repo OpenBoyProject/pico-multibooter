@@ -81,7 +81,7 @@ static inline uint32_t crc_word(uint32_t crc, uint32_t word) {
     return crc;
 }
 
-void dumper_init(Dumper *dumper) {
+static DUMPER_CODE void reset_transfer(Dumper *dumper) {
     /* Explicit stores avoid calling an EWRAM memset from the serial IRQ. */
     dumper->crc = UINT32_MAX;
     dumper->start = 0;
@@ -94,6 +94,27 @@ void dumper_init(Dumper *dumper) {
     dumper->phase = READY;
 }
 
+void dumper_init(Dumper *dumper) {
+    reset_transfer(dumper);
+    dumper->save_request = 0;
+    dumper->save_result = 0;
+    dumper->generation = 0;
+}
+
+void dumper_save_complete(Dumper *dumper, uint32_t generation, uint32_t result) {
+    if (dumper->generation != generation || dumper->phase != PREPARING) return;
+    dumper->save_result = result;
+    dumper->phase = result <= SAVE_MAX_SIZE && result != 0 ? READY : FAILED;
+}
+
+static inline uint32_t range_end(const Dumper *dumper, uint32_t address) {
+    if (address >= DUMPER_ROM_START && address < DUMPER_ROM_END) return DUMPER_ROM_END;
+    uint32_t size = dumper->save_result;
+    if (size && size <= SAVE_MAX_SIZE && address >= SAVE_START && address < SAVE_START + size)
+        return SAVE_START + size;
+    return 0;
+}
+
 static inline uint32_t fail(Dumper *dumper, uint32_t error) {
     dumper->state = COMMAND;
     dumper->remaining = 0;
@@ -104,17 +125,23 @@ static inline uint32_t fail(Dumper *dumper, uint32_t error) {
 uint32_t dumper_handle(Dumper *dumper, uint32_t command, DumperReadWord read_word) {
     /* Recovery commands work even in an interrupted parameter list or stream. */
     if (command == DUMPER_HELLO) {
-        dumper_init(dumper);
+        reset_transfer(dumper);
+        dumper->save_request = 0;
+        dumper->save_result = 0;
+        ++dumper->generation;
         return DUMPER_ID;
     }
     if (command == DUMPER_CANCEL) {
         dumper->state = COMMAND;
         dumper->remaining = 0;
         dumper->phase = CANCELLED;
+        dumper->save_request = 0;
+        dumper->save_result = 0;
+        ++dumper->generation;
         return DUMPER_ACK;
     }
     if (dumper->state == BEGIN_ADDRESS) {
-        if (command < DUMPER_ROM_START || command >= DUMPER_ROM_END || (command & 3)) {
+        if (!range_end(dumper, command) || (command & 3)) {
             return fail(dumper, DUMPER_BAD_ADDRESS);
         }
         dumper->start = command;
@@ -123,7 +150,8 @@ uint32_t dumper_handle(Dumper *dumper, uint32_t command, DumperReadWord read_wor
         return command;
     }
     if (dumper->state == BEGIN_SIZE) {
-        if (!command || (command & 3) || command > DUMPER_ROM_END - dumper->start) {
+        uint32_t end = range_end(dumper, dumper->start);
+        if (!end || !command || (command & 3) || command > end - dumper->start) {
             return fail(dumper, DUMPER_BAD_ADDRESS);
         }
         dumper->total = command;
@@ -150,10 +178,22 @@ uint32_t dumper_handle(Dumper *dumper, uint32_t command, DumperReadWord read_wor
         return ~dumper->crc;
     }
     if (command == DUMPER_BEGIN) {
-        dumper_init(dumper);
+        if (dumper->phase == PREPARING) return fail(dumper, DUMPER_BAD_STATE);
+        reset_transfer(dumper);
         dumper->state = BEGIN_ADDRESS;
         return DUMPER_ACK;
     }
+    if ((command & 0xffff0000) == DUMPER_SAVE) {
+        uint32_t type = command & 0xffff;
+        if (type > SAVE_EEPROM8K) return fail(dumper, DUMPER_BAD_COMMAND);
+        reset_transfer(dumper);
+        ++dumper->generation;
+        dumper->save_result = 0;
+        dumper->save_request = type + 1;
+        dumper->phase = PREPARING;
+        return DUMPER_ACK;
+    }
+    if (command == DUMPER_SAVE_STATUS) return dumper->save_result;
     if ((command & 0xffff0000) == DUMPER_READ) {
         uint32_t count = command & 0xffff;
         if (dumper->phase != SENDING || !count || count > DUMPER_MAX_BLOCK_WORDS ||

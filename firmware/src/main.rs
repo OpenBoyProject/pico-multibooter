@@ -2,14 +2,13 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use embassy_futures::join::join3;
+use embassy_futures::join::join;
 use embassy_rp::{
     bind_interrupts, gpio,
     peripherals::USB,
     spi,
     usb::{Driver, InterruptHandler},
 };
-use embassy_time::Timer;
 use embassy_usb::{
     Builder, Config,
     class::cdc_acm::{CdcAcmClass, State},
@@ -61,11 +60,5 @@ async fn main(_spawner: Spawner) {
     let mut device = builder.build();
 
     let mut led = gpio::Output::new(p.PIN_25, gpio::Level::Low);
-    let heartbeat = async {
-        loop {
-            Timer::after_secs(1).await;
-            led.toggle();
-        }
-    };
-    join3(device.run(), usb::serve(class, &mut spi, &bus), heartbeat).await;
+    join(device.run(), usb::serve(class, &mut spi, &bus, &mut led)).await;
 }

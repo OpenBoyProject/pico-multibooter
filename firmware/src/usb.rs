@@ -2,6 +2,7 @@ use core::cell::Cell;
 
 use embassy_futures::select::{Either, select};
 use embassy_rp::{
+    gpio::Output,
     peripherals::{SPI0, USB},
     spi::{Blocking, Spi},
     usb::Driver,
@@ -22,6 +23,15 @@ use protocol::{Decoder, ErrorCode, MAX_FRAME};
 const PACKET_SIZE: usize = 64;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(2);
+
+struct Activity<'a, 'd>(&'a mut Output<'d>);
+
+impl Drop for Activity<'_, '_> {
+    fn drop(&mut self) {
+        // Also runs when a disconnect cancels the transaction future.
+        self.0.set_low();
+    }
+}
 
 /// Accessed only by futures on the same executor thread.
 #[derive(Default)]
@@ -127,6 +137,7 @@ pub async fn serve<'d>(
     class: CdcAcmClass<'d, Driver<'d, USB>>,
     spi: &mut Spi<'_, SPI0, Blocking>,
     bus: &BusState,
+    led: &mut Output<'_>,
 ) -> ! {
     let (mut tx, mut rx, control) = class.split_with_control();
     loop {
@@ -154,7 +165,11 @@ pub async fn serve<'d>(
             connected: || session.active(),
         };
         // Cancelling drops the decoder and any pending transfer/reply.
-        select(session.wait_end(), run_session(&mut tx, &mut rx, &mut link)).await;
+        select(
+            session.wait_end(),
+            run_session(&mut tx, &mut rx, &mut link, led),
+        )
+        .await;
     }
 }
 
@@ -162,6 +177,7 @@ async fn run_session<'d>(
     tx: &mut Sender<'d, Driver<'d, USB>>,
     rx: &mut Receiver<'d, Driver<'d, USB>>,
     link: &mut impl Link,
+    led: &mut Output<'_>,
 ) {
     let mut decoder = Decoder::new();
     let mut input = [0; PACKET_SIZE];
@@ -179,6 +195,8 @@ async fn run_session<'d>(
             let Some(frame) = decoder.push(byte) else {
                 continue;
             };
+            led.set_high();
+            let _activity = Activity(led);
             let result = match frame {
                 Ok(frame) => server::handle(frame, link, &mut output).await,
                 Err(error) => server::reject(error.command, ErrorCode::InvalidFrame, &mut output),
